@@ -1,0 +1,19 @@
+﻿# Raw and processed clinical data — keep local
+data/raw/
+data/interim/
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local secrets and environment settings
+.env
+.env.*
+!.env.example
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
