@@ -1,0 +1,4 @@
+cohort,outcome_status,rows
+MACS,reported_failure_related_signal,250
+MACS,unknown,143013
+WIHS,unknown,70355

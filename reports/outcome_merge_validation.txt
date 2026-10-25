@@ -1,0 +1,17 @@
+# Existing outcome dataset update
+
+- Existing enriched file updated in place: data\interim\hiv_longitudinal_outcomes_enriched.csv
+- Rows preserved: 213,618 -> 213,618
+- Unique participants: 12,320
+- Duplicate participant-visits: 0
+- MACS outcome records actually matched: 83,177 of 143,263 MACS rows
+- MACS medication participant-visits after de-duplication: 40,571
+- MACS code-65 proxy-positive participant-visits: 314
+- AIDS/death evidence is not treated as ART treatment failure.
+- No new dataset file is created; existing enriched CSV is overwritten after a one-time .bak backup.
+
+## Summary by cohort
+
+cohort   rows  participants  treatment_outcome_positive  treatment_outcome_negative  treatment_outcome_unknown  documented_aids_death_evidence
+  MACS 143263          7343                         262                        2115                     140886                           27831
+  WIHS  70355          4977                           0                           0                      70355                           35834
