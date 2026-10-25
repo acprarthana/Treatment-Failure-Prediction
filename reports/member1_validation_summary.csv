@@ -1,0 +1,9 @@
+Check,Value
+Total rows,213618
+Unique participants,12320
+Missing participant IDs,0
+Duplicate participant-visits,0
+Missing CD4,55753
+Missing viral load,107111
+Missing medication match,142498
+Missing outcome labels,213618
