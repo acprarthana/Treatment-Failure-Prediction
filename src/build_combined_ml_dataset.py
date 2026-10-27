@@ -14,7 +14,7 @@ def build_cohort(cohort):
     if cohort == "MACS":
         labs = pd.read_csv(DATA / "lab_rslt_clean.csv", dtype={"CASEID": str, "VISIT": str})
         drugs = pd.read_csv(DATA / "macs_drugf1_selected_v2.csv", dtype={"CASEID": str, "VISIT": str})
-        cd4_col, year_col = "TCELL", "LDATY"
+        cd4_col, year_col = "LEU3N", "LDATY"
         drugs["failure_signal"] = pd.concat(
             [clean_code(drugs[c]) for c in ["STOT1", "STOT2", "STOT3"]], axis=1
         ).eq("65").any(axis=1)

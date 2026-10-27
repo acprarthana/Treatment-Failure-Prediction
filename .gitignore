@@ -17,3 +17,8 @@ venv/
 .DS_Store
 Thumbs.db
 .vscode/
+
+
+#personalfiles
+chatgpt_chat.txt
+remember_me.txt
