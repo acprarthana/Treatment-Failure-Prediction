@@ -1,17 +1,20 @@
-# SHAP Explainability — Treatment Outcome Proxy
+# Gradient Boosting SHAP Explainability Report
 
-## Dataset and model
+## Model
+
+This report explains the Gradient Boosting treatment-outcome proxy model. Gradient Boosting was selected as the best-performing model among the evaluated models based on test PR-AUC.
+
+## Dataset
 
 - Labelled rows: 2,377
+- Unique participants: 1,192
 - Training rows: 1,872
 - Test rows: 505
-- Training participants: 953
-- Test participants: 239
-- Model: XGBoost
-- Explainer: SHAP TreeExplainer
-- Split: participant-level 80/20 holdout
+- Transformed features: 57
+- Split: participant-level holdout
+- Random state: 42
 
-## Input variables
+## Original input features
 
 - `CD4`
 - `viral_load`
@@ -26,19 +29,23 @@
 
 ## Top SHAP features
 
-| Rank | Feature | Mean absolute SHAP |
+| Rank | Feature | Mean Absolute SHAP |
 |---:|---|---:|
-| 1 | numeric__year | 0.788242 |
-| 2 | numeric__viral_load_previous | 0.514685 |
-| 3 | numeric__CD4_previous | 0.492640 |
-| 4 | numeric__viral_load | 0.253156 |
-| 5 | numeric__CD4 | 0.186505 |
-| 6 | numeric__viral_load_change | 0.169500 |
-| 7 | numeric__CD4_change | 0.143659 |
-| 8 | categorical__VISIT_180 | 0.053859 |
-| 9 | numeric__years_since_previous_visit | 0.037643 |
-| 10 | categorical__VISIT_500 | 0.030354 |
+| 1 | numeric__year | 0.386627 |
+| 2 | numeric__viral_load_previous | 0.292200 |
+| 3 | numeric__CD4_previous | 0.282820 |
+| 4 | numeric__viral_load_change | 0.159327 |
+| 5 | numeric__CD4 | 0.098090 |
+| 6 | numeric__viral_load | 0.046465 |
+| 7 | categorical__VISIT_270 | 0.022374 |
+| 8 | categorical__VISIT_180 | 0.017622 |
+| 9 | categorical__VISIT_220 | 0.009755 |
+| 10 | categorical__VISIT_320 | 0.008987 |
 
-## Important interpretation note
+## Interpretation
 
-SHAP values explain the XGBoost model's predictions. They do not establish causal relationships or clinical treatment failure. The underlying target is a treatment-outcome proxy as documented by the existing evaluation pipeline.
+Mean absolute SHAP values quantify how strongly each transformed feature contributed to the model's predictions on the test set. Larger values indicate greater average contribution to the model output; they do not by themselves establish clinical causality or treatment effectiveness.
+
+## Important limitation
+
+The target is a treatment-outcome proxy based on the available labelled data and is not independently confirmed clinical treatment failure. SHAP describes the behaviour of the trained predictive model and should not be interpreted as evidence of causal relationships.
