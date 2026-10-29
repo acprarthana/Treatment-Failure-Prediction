@@ -443,7 +443,6 @@ def health_check():
         "status": "ok" if MODEL_ARTIFACT is not None else "degraded",
         "service": "HIV Treatment Outcome Prediction API",
         "model_loaded": MODEL_ARTIFACT is not None,
-        "model_error": MODEL_ERROR,
     }
 
 
