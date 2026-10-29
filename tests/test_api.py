@@ -136,7 +136,6 @@ def test_shap_values_reconstruct_model_raw_score():
     explainer = shap.TreeExplainer(classifier)
     shap_values = np.asarray(explainer.shap_values(transformed))
 
-    # Check the SHAP output dimensions for this binary model.
     assert shap_values.ndim == 2
     assert shap_values.shape[0] == 1
     assert shap_values.shape[1] == transformed.shape[1]
@@ -151,5 +150,22 @@ def test_shap_values_reconstruct_model_raw_score():
         classifier.decision_function(transformed)[0]
     )
 
-    # SHAP values should reconstruct the model's raw decision score.
     assert abs(reconstructed_score - actual_score) < 1e-5
+
+
+def test_inconsistent_cd4_change_is_rejected():
+    invalid_input = VALID_INPUT.copy()
+    invalid_input["CD4_change"] = 100
+
+    response = client.post("/predict", json=invalid_input)
+
+    assert response.status_code == 422
+
+
+def test_inconsistent_viral_load_change_is_rejected():
+    invalid_input = VALID_INPUT.copy()
+    invalid_input["viral_load_change"] = -100
+
+    response = client.post("/predict", json=invalid_input)
+
+    assert response.status_code == 422

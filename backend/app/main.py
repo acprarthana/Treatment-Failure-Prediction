@@ -1,57 +1,42 @@
 ﻿
 from pathlib import Path
+from typing import Any
 
 import joblib
 import numpy as np
 import pandas as pd
 import shap
-
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from sklearn.pipeline import Pipeline
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 # --------------------------------------------------
-# Project paths and API configuration
+# Configuration
 # --------------------------------------------------
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-MODEL_PATH = (
-    PROJECT_ROOT
-    / "models"
-    / "gradient_boosting_treatment_proxy.joblib"
-)
+BASE_DIR = Path(__file__).resolve().parents[2]
+MODEL_PATH = BASE_DIR / "models" / "gradient_boosting_treatment_proxy.joblib"
 
 app = FastAPI(
-    title="HIV Treatment Failure Prediction API",
+    title="HIV Treatment Outcome Prediction API",
     description=(
-        "Prediction and patient-specific SHAP explanations "
-        "for the treatment-outcome proxy model."
+        "Prediction and SHAP-based explanations for a treatment-outcome "
+        "proxy. Outputs are research predictions, not clinical diagnoses."
     ),
-    version="1.2.0",
+    version="1.0.0",
 )
 
-
-FEATURE_COLUMNS = [
-    "CD4",
-    "viral_load",
-    "year",
-    "CD4_previous",
-    "viral_load_previous",
-    "CD4_change",
-    "viral_load_change",
-    "years_since_previous_visit",
-    "sex",
-    "VISIT",
-]
+MODEL_ARTIFACT: dict[str, Any] | None = None
+MODEL_ERROR: str | None = None
 
 
 # --------------------------------------------------
-# Request schema
+# Request schema and validation
 # --------------------------------------------------
 
 class PredictionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     CD4: float
     viral_load: float
     year: float
@@ -63,356 +48,421 @@ class PredictionRequest(BaseModel):
     sex: str
     VISIT: float
 
+    @model_validator(mode="after")
+    def validate_values(self):
+        numeric_fields = {
+            "CD4": self.CD4,
+            "viral_load": self.viral_load,
+            "year": self.year,
+            "CD4_previous": self.CD4_previous,
+            "viral_load_previous": self.viral_load_previous,
+            "CD4_change": self.CD4_change,
+            "viral_load_change": self.viral_load_change,
+            "years_since_previous_visit": self.years_since_previous_visit,
+            "VISIT": self.VISIT,
+        }
+
+        for field_name, value in numeric_fields.items():
+            if not np.isfinite(value):
+                raise ValueError(f"{field_name} must be a finite number.")
+
+        if self.CD4 < 0 or self.CD4_previous < 0:
+            raise ValueError("CD4 values cannot be negative.")
+
+        if self.viral_load < 0 or self.viral_load_previous < 0:
+            raise ValueError("Viral load values cannot be negative.")
+
+        if self.years_since_previous_visit < 0:
+            raise ValueError(
+                "years_since_previous_visit cannot be negative."
+            )
+
+        if not self.sex.strip():
+            raise ValueError("sex cannot be empty.")
+
+        # Change = current measurement - previous measurement.
+        tolerance = 1e-6
+
+        expected_cd4_change = self.CD4 - self.CD4_previous
+        expected_viral_load_change = (
+            self.viral_load - self.viral_load_previous
+        )
+
+        if abs(self.CD4_change - expected_cd4_change) > tolerance:
+            raise ValueError(
+                "CD4_change must equal CD4 - CD4_previous."
+            )
+
+        if (
+            abs(self.viral_load_change - expected_viral_load_change)
+            > tolerance
+        ):
+            raise ValueError(
+                "viral_load_change must equal "
+                "viral_load - viral_load_previous."
+            )
+
+        return self
+
 
 # --------------------------------------------------
-# Load the saved model
+# Model loading
 # --------------------------------------------------
 
-def load_model():
+def load_model_artifact() -> dict[str, Any]:
+    """Load the saved model artifact and validate its structure."""
     if not MODEL_PATH.exists():
         raise FileNotFoundError(
-            f"Model file not found: {MODEL_PATH}. "
-            "Run src/save_final_model.py first."
+            f"Model artifact not found at: {MODEL_PATH}"
         )
 
-    saved_object = joblib.load(MODEL_PATH)
+    artifact = joblib.load(MODEL_PATH)
 
-    # Support a saved dictionary or a directly saved pipeline.
-    if isinstance(saved_object, dict):
-        model_pipeline = saved_object.get("pipeline")
-
-        if model_pipeline is None:
-            raise ValueError(
-                "The saved model dictionary does not contain "
-                "a 'pipeline' entry."
-            )
-    else:
-        model_pipeline = saved_object
-
-    if not isinstance(model_pipeline, Pipeline):
-        raise TypeError(
-            "The saved model is not an sklearn Pipeline."
-        )
-
-    if "model" not in model_pipeline.named_steps:
+    if not isinstance(artifact, dict):
         raise ValueError(
-            "The pipeline does not contain a step named 'model'."
+            "Expected the saved model artifact to be a dictionary."
         )
 
-    return model_pipeline
+    required_keys = {"pipeline", "features"}
+    missing_keys = required_keys - set(artifact.keys())
+
+    if missing_keys:
+        raise ValueError(
+            "Model artifact is missing required keys: "
+            + ", ".join(sorted(missing_keys))
+        )
+
+    pipeline = artifact["pipeline"]
+
+    if not hasattr(pipeline, "predict"):
+        raise ValueError("The saved pipeline does not provide predict().")
+
+    if not hasattr(pipeline, "predict_proba"):
+        raise ValueError(
+            "The saved pipeline does not provide predict_proba()."
+        )
+
+    if not hasattr(pipeline, "named_steps"):
+        raise ValueError("The saved pipeline does not expose named_steps.")
+
+    if "preprocess" not in pipeline.named_steps:
+        raise ValueError("The saved pipeline has no 'preprocess' step.")
+
+    if "model" not in pipeline.named_steps:
+        raise ValueError("The saved pipeline has no 'model' step.")
+
+    if not isinstance(artifact["features"], (list, tuple)):
+        raise ValueError("The model feature list must be a list or tuple.")
+
+    if not artifact["features"]:
+        raise ValueError("The model feature list is empty.")
+
+    return artifact
 
 
-try:
-    pipeline = load_model()
-    model_load_error = None
-except Exception as exc:
-    pipeline = None
-    model_load_error = str(exc)
+def get_model_artifact() -> dict[str, Any]:
+    """Return the cached model artifact, loading it if necessary."""
+    global MODEL_ARTIFACT, MODEL_ERROR
+
+    if MODEL_ARTIFACT is not None:
+        return MODEL_ARTIFACT
+
+    try:
+        MODEL_ARTIFACT = load_model_artifact()
+        MODEL_ERROR = None
+        return MODEL_ARTIFACT
+    except Exception as exc:
+        MODEL_ERROR = f"{type(exc).__name__}: {exc}"
+        raise HTTPException(
+            status_code=503,
+            detail="Prediction model is unavailable.",
+        ) from exc
 
 
 def get_pipeline():
-    if pipeline is None:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Could not load prediction model: {model_load_error}",
-        )
+    """Return the trained sklearn pipeline."""
+    return get_model_artifact()["pipeline"]
 
-    return pipeline
+
+@app.on_event("startup")
+def startup_load_model():
+    """Attempt to load the model at application startup."""
+    global MODEL_ARTIFACT, MODEL_ERROR
+
+    try:
+        MODEL_ARTIFACT = load_model_artifact()
+        MODEL_ERROR = None
+    except Exception as exc:
+        MODEL_ARTIFACT = None
+        MODEL_ERROR = f"{type(exc).__name__}: {exc}"
 
 
 # --------------------------------------------------
-# Convert API request to model input
+# Input preparation and model helpers
 # --------------------------------------------------
 
 def request_to_dataframe(
     request: PredictionRequest,
 ) -> pd.DataFrame:
-    values = request.model_dump()
+    """Convert validated request data into the saved model's feature order."""
+    artifact = get_model_artifact()
+    feature_columns = list(artifact["features"])
+    request_data = request.model_dump()
+
+    missing_features = [
+        feature for feature in feature_columns
+        if feature not in request_data
+    ]
+
+    if missing_features:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "API request schema is missing model features: "
+                + ", ".join(missing_features)
+            ),
+        )
 
     return pd.DataFrame(
-        [[values[column] for column in FEATURE_COLUMNS]],
-        columns=FEATURE_COLUMNS,
+        [[request_data[feature] for feature in feature_columns]],
+        columns=feature_columns,
     )
 
 
+def get_model_name(artifact: dict[str, Any]) -> str:
+    return str(artifact.get("model_name", "Gradient Boosting"))
+
+
+def json_safe_number(value: Any) -> float | None:
+    """Convert a numeric value to a JSON-safe Python float."""
+    number = float(value)
+    return number if np.isfinite(number) else None
+
+
+def predict_with_pipeline(input_df: pd.DataFrame) -> dict[str, Any]:
+    """Return the predicted class and class probabilities."""
+    artifact = get_model_artifact()
+    pipeline = artifact["pipeline"]
+
+    prediction = int(pipeline.predict(input_df)[0])
+    probabilities = pipeline.predict_proba(input_df)[0]
+    classes = pipeline.named_steps["model"].classes_
+
+    probability_by_class = {
+        str(label): json_safe_number(probability)
+        for label, probability in zip(classes, probabilities)
+    }
+
+    return {
+        "prediction": prediction,
+        "probabilities": probability_by_class,
+        "class_probabilities": probability_by_class,
+        "model_name": get_model_name(artifact),
+    }
+
+
 # --------------------------------------------------
-# Get the transformed feature names for SHAP
+# SHAP helpers
 # --------------------------------------------------
 
-def get_transformed_features(model_pipeline, input_df):
-    """Apply preprocessing without running the final prediction step."""
+def get_transformed_feature_names(
+    pipeline,
+    transformed_data,
+    fallback_names: list[str],
+) -> list[str]:
+    """Get feature names after preprocessing."""
+    preprocessor = pipeline.named_steps["preprocess"]
 
-    preprocessing = model_pipeline[:-1]
-    transformed = preprocessing.transform(input_df)
+    try:
+        names = list(preprocessor.get_feature_names_out())
+        if len(names) == transformed_data.shape[1]:
+            return names
+    except Exception:
+        pass
+
+    if len(fallback_names) == transformed_data.shape[1]:
+        return fallback_names
+
+    return [
+        f"feature_{index}"
+        for index in range(transformed_data.shape[1])
+    ]
+
+
+def make_feature_description(feature_name: str) -> str:
+    """Convert common transformed feature names into readable descriptions."""
+    readable_name = feature_name
+
+    if "__" in readable_name:
+        readable_name = readable_name.split("__", 1)[1]
+
+    replacements = {
+        "CD4_previous": "Previous CD4 count",
+        "viral_load_previous": "Previous viral load",
+        "CD4_change": "Change in CD4 count",
+        "viral_load_change": "Change in viral load",
+        "years_since_previous_visit": "Years since previous visit",
+        "CD4": "Current CD4 count",
+        "viral_load": "Current viral load",
+        "year": "Year of observation",
+        "VISIT": "Visit identifier",
+        "sex": "Sex",
+    }
+
+    return replacements.get(
+        readable_name,
+        readable_name.replace("_", " "),
+    )
+
+
+def calculate_shap_explanation(
+    input_df: pd.DataFrame,
+    predicted_class: int,
+) -> dict[str, Any]:
+    """
+    Calculate SHAP values for the saved tree-based classifier.
+
+    For the current binary GradientBoostingClassifier, SHAP values
+    explain the class 1 raw model score, not probability changes.
+    """
+    pipeline = get_pipeline()
+    preprocessor = pipeline.named_steps["preprocess"]
+    classifier = pipeline.named_steps["model"]
+
+    transformed = preprocessor.transform(input_df)
 
     if hasattr(transformed, "toarray"):
         transformed = transformed.toarray()
 
     transformed = np.asarray(transformed)
 
-    try:
-        feature_names = [
-            str(name)
-            for name in preprocessing.get_feature_names_out()
-        ]
-    except Exception:
-        feature_names = [
-            f"feature_{index}"
-            for index in range(transformed.shape[1])
-        ]
+    feature_names = get_transformed_feature_names(
+        pipeline,
+        transformed,
+        list(input_df.columns),
+    )
 
-    if len(feature_names) != transformed.shape[1]:
-        feature_names = [
-            f"feature_{index}"
-            for index in range(transformed.shape[1])
-        ]
+    explainer = shap.TreeExplainer(classifier)
+    shap_output = explainer.shap_values(transformed)
 
-    return transformed, feature_names
-
-
-# --------------------------------------------------
-# Human-readable feature descriptions
-# --------------------------------------------------
-
-def describe_shap_feature(feature_name: str) -> dict:
-    """Return a readable label and description for a model feature."""
-
-    feature = feature_name.split("__", 1)[-1]
-
-    descriptions = {
-        "CD4": (
-            "Current CD4 count",
-            "The recorded CD4 count at the current visit.",
-        ),
-        "viral_load": (
-            "Current viral load",
-            "The recorded viral load at the current visit.",
-        ),
-        "year": (
-            "Visit year",
-            "The calendar year associated with this visit.",
-        ),
-        "CD4_previous": (
-            "Previous CD4 count",
-            "The recorded CD4 count at the previous visit.",
-        ),
-        "viral_load_previous": (
-            "Previous viral load",
-            "The recorded viral load at the previous visit.",
-        ),
-        "CD4_change": (
-            "Change in CD4 count",
-            "The change in CD4 count between visits.",
-        ),
-        "viral_load_change": (
-            "Change in viral load",
-            "The change in viral load between visits.",
-        ),
-        "years_since_previous_visit": (
-            "Time since previous visit",
-            "The elapsed time since the previous visit, measured in years.",
-        ),
-    }
-
-    if feature in descriptions:
-        label, description = descriptions[feature]
-
-    elif feature.startswith("VISIT_"):
-        category = feature.removeprefix("VISIT_")
-        label = f"Visit category: {category}"
-        description = (
-            f"Indicates the recorded visit category {category}."
-        )
-
-    elif feature.startswith("sex_"):
-        category = feature.removeprefix("sex_")
-        label = f"Recorded sex: {category}"
-        description = (
-            f"Indicates the encoded sex category {category}."
-        )
-
+    if isinstance(shap_output, list):
+        class_index = 1 if len(shap_output) > 1 else 0
+        shap_values = np.asarray(shap_output[class_index])[0]
     else:
-        label = feature.replace("_", " ").replace("-", " ").title()
-        description = (
-            "A transformed feature used by the prediction model."
+        shap_array = np.asarray(shap_output)
+
+        if shap_array.ndim == 3:
+            if shap_array.shape[-1] > 1:
+                shap_values = shap_array[0, :, 1]
+            else:
+                shap_values = shap_array[0, :, 0]
+        elif shap_array.ndim == 2:
+            shap_values = shap_array[0]
+        else:
+            raise ValueError(
+                f"Unexpected SHAP value shape: {shap_array.shape}"
+            )
+
+    expected_value = np.asarray(explainer.expected_value).reshape(-1)
+    base_value = float(
+        expected_value[1]
+        if expected_value.size > 1
+        else expected_value[0]
+    )
+
+    if len(shap_values) != len(feature_names):
+        raise ValueError(
+            "SHAP values do not match the transformed feature count."
         )
 
-    return {
-        "feature_label": label,
-        "description": description,
-    }
+    features = []
 
+    for name, value in zip(feature_names, shap_values):
+        shap_value = float(value)
 
-# --------------------------------------------------
-# Patient-specific explanations
-# --------------------------------------------------
+        if not np.isfinite(shap_value):
+            raise ValueError(
+                "SHAP returned a non-finite feature contribution."
+            )
 
+        features.append(
+            {
+                "feature": name,
+                "description": make_feature_description(name),
+                "shap_value": shap_value,
+                "absolute_shap_value": abs(shap_value),
+                "direction": (
+                    "positive contribution to class 1 raw score"
+                    if shap_value > 0
+                    else (
+                        "negative contribution to class 1 raw score"
+                        if shap_value < 0
+                        else "no contribution to class 1 raw score"
+                    )
+                ),
+            }
+        )
 
-def explain_patient_feature(
-    feature_name: str,
-    input_df: pd.DataFrame,
-) -> dict:
-    """
-    Describe recorded measurements and changes.
+    features.sort(
+        key=lambda item: item["absolute_shap_value"],
+        reverse=True,
+    )
 
-    SHAP contributions explain model behavior, not causation
-    or independently confirmed clinical treatment failure.
-    """
-
-    row = input_df.iloc[0]
-    feature = feature_name.split("__", 1)[-1]
-
-    if feature in ("CD4", "viral_load"):
-        if feature == "CD4":
-            current = float(row["CD4"])
-            previous = float(row["CD4_previous"])
-            label = "CD4 count"
-        else:
-            current = float(row["viral_load"])
-            previous = float(row["viral_load_previous"])
-            label = "viral load"
-
-        change = current - previous
-
-        if change > 0:
-            change_text = f"increased by {change:g}"
-        elif change < 0:
-            change_text = f"decreased by {abs(change):g}"
-        else:
-            change_text = "did not change"
-
-        return {
-            "current_value": current,
-            "previous_value": previous,
-            "observed_change": change_text,
-            "change_value": change,
-            "patient_explanation": (
-                f"The recorded {label} {change_text} between visits, "
-                f"from {previous:g} to {current:g}. The SHAP value "
-                f"describes how the current {label} feature contributed "
-                "to the model score. This observed change alone does "
-                "not establish or confirm clinical treatment failure."
-            ),
-        }
-
-    if feature in ("CD4_previous", "viral_load_previous"):
-        if feature == "CD4_previous":
-            value = float(row["CD4_previous"])
-            label = "previous CD4 count"
-        else:
-            value = float(row["viral_load_previous"])
-            label = "previous viral load"
-
-        return {
-            "current_value": value,
-            "patient_explanation": (
-                f"The recorded {label} was {value:g}. Its SHAP value "
-                "describes this feature's contribution to the model "
-                "score, not a clinical cause or confirmed outcome."
-            ),
-        }
-
-    if feature in ("CD4_change", "viral_load_change"):
-        if feature == "CD4_change":
-            current = float(row["CD4"])
-            previous = float(row["CD4_previous"])
-            value = float(row["CD4_change"])
-            label = "CD4"
-            feature_label = "CD4-change"
-        else:
-            current = float(row["viral_load"])
-            previous = float(row["viral_load_previous"])
-            value = float(row["viral_load_change"])
-            label = "viral load"
-            feature_label = "viral-load-change"
-
-        observed_change = current - previous
-
-        if observed_change > 0:
-            change_text = f"increased by {observed_change:g}"
-        elif observed_change < 0:
-            change_text = f"decreased by {abs(observed_change):g}"
-        else:
-            change_text = "did not change"
-
-        return {
-            "current_value": value,
-            "previous_value": previous,
-            "measurement_value": current,
-            "observed_change": change_text,
-            "change_value": observed_change,
-            "patient_explanation": (
-                f"The supplied {feature_label} feature is {value:g}. "
-                f"The recorded {label} {change_text}, from "
-                f"{previous:g} to {current:g}. The SHAP value for "
-                f"the {feature_label} feature describes how this "
-                "change feature contributes to the model score. "
-                "It does not explain the medical cause of the change "
-                "or independently confirm treatment failure."
-            ),
-        }
+    shap_sum = float(np.sum(shap_values))
 
     return {
-        "patient_explanation": (
-            "The SHAP value describes how this feature contributed "
-            "to the model score. A feature contribution is not proof "
-            "of causation or independently confirmed clinical "
-            "treatment failure."
+        "method": "SHAP TreeExplainer",
+        "explained_output": (
+            "Class 1 raw model score; SHAP values are not probability changes."
         ),
+        "expected_value": base_value,
+        "shap_value_sum": shap_sum,
+        "reconstructed_raw_score": base_value + shap_sum,
+        "features": features,
+        "top_features": features[:10],
     }
 
 
-
 # --------------------------------------------------
-# Health endpoint
+# API endpoints
 # --------------------------------------------------
 
 @app.get("/health")
-def health():
+def health_check():
+    """Report API status and model availability."""
+    global MODEL_ARTIFACT, MODEL_ERROR
+
+    if MODEL_ARTIFACT is None:
+        try:
+            MODEL_ARTIFACT = load_model_artifact()
+            MODEL_ERROR = None
+        except Exception as exc:
+            MODEL_ERROR = f"{type(exc).__name__}: {exc}"
+
     return {
-        "status": "ok" if pipeline is not None else "error",
-        "service": "treatment-failure-prediction",
-        "model": "Gradient Boosting",
-        "model_loaded": pipeline is not None,
-        "model_error": model_load_error,
+        "status": "ok" if MODEL_ARTIFACT is not None else "degraded",
+        "service": "HIV Treatment Outcome Prediction API",
+        "model_loaded": MODEL_ARTIFACT is not None,
+        "model_error": MODEL_ERROR,
     }
 
 
-# --------------------------------------------------
-# Prediction endpoint
-# --------------------------------------------------
-
 @app.post("/predict")
 def predict(request: PredictionRequest):
-    model_pipeline = get_pipeline()
-
+    """Predict the project's treatment-outcome proxy."""
     try:
         input_df = request_to_dataframe(request)
-        prediction = model_pipeline.predict(input_df)[0]
+        result = predict_with_pipeline(input_df)
 
-        result = {
-            "prediction": int(prediction),
-            "model": "Gradient Boosting",
-        }
+        result["model"] = result["model_name"]
+        result["probability"] = result["class_probabilities"].get(
+            str(result["prediction"])
+        )
 
-        if hasattr(model_pipeline, "predict_proba"):
-            probabilities = model_pipeline.predict_proba(input_df)[0]
-
-            result["class_probabilities"] = {
-                str(label): float(probability)
-                for label, probability in zip(
-                    model_pipeline.classes_,
-                    probabilities,
-                )
-            }
-
-            predicted_index = list(model_pipeline.classes_).index(
-                prediction
-            )
-
-            result["probability"] = float(
-                probabilities[predicted_index]
-            )
+        result["target_note"] = (
+            "The model predicts the project's treatment-outcome proxy, "
+            "not independently confirmed clinical HIV treatment failure."
+        )
 
         return result
 
@@ -421,126 +471,31 @@ def predict(request: PredictionRequest):
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Prediction failed: {exc}",
+            detail="Prediction failed due to an internal processing error.",
         ) from exc
 
 
-# --------------------------------------------------
-# SHAP explanation endpoint
-# --------------------------------------------------
-
 @app.post("/explanation")
-def explanation(request: PredictionRequest):
-    model_pipeline = get_pipeline()
-
+def explain_prediction(request: PredictionRequest):
+    """Return a prediction and its largest SHAP contributions."""
     try:
         input_df = request_to_dataframe(request)
-        prediction = model_pipeline.predict(input_df)[0]
+        prediction_result = predict_with_pipeline(input_df)
 
-        transformed, feature_names = get_transformed_features(
-            model_pipeline,
+        explanation = calculate_shap_explanation(
             input_df,
-        )
-
-        classifier = model_pipeline.named_steps["model"]
-        explainer = shap.TreeExplainer(classifier)
-        shap_values = explainer.shap_values(transformed)
-
-        classes = list(model_pipeline.classes_)
-        class_index = classes.index(prediction)
-
-        # Support common SHAP output formats.
-        if isinstance(shap_values, list):
-            values_for_row = np.asarray(
-                shap_values[class_index]
-            )[0]
-
-        else:
-            values_array = np.asarray(shap_values)
-
-            if values_array.ndim == 3:
-                # Format: samples x features x classes.
-                if values_array.shape[2] == len(classes):
-                    values_for_row = values_array[
-                        0, :, class_index
-                    ]
-
-                # Format: samples x classes x features.
-                elif values_array.shape[1] == len(classes):
-                    values_for_row = values_array[
-                        0, class_index, :
-                    ]
-
-                else:
-                    raise ValueError(
-                        "Cannot identify the class dimension in "
-                        f"SHAP output shape {values_array.shape}."
-                    )
-
-            elif values_array.ndim == 2:
-                # Binary tree models can return a single output.
-                values_for_row = values_array[0]
-
-            else:
-                raise ValueError(
-                    f"Unexpected SHAP output shape: "
-                    f"{values_array.shape}"
-                )
-
-        values_for_row = np.asarray(values_for_row).reshape(-1)
-
-        if len(values_for_row) != len(feature_names):
-            raise ValueError(
-                "The number of SHAP values does not match "
-                "the feature names."
-            )
-
-        contributions = []
-
-        for index, feature_name in enumerate(feature_names):
-            shap_value = float(values_for_row[index])
-
-            feature_info = describe_shap_feature(feature_name)
-            patient_info = explain_patient_feature(
-                feature_name,
-                input_df,
-            )
-
-            if shap_value > 0:
-                direction = "positive"
-            elif shap_value < 0:
-                direction = "negative"
-            else:
-                direction = "neutral"
-
-            contributions.append({
-                "feature": feature_name,
-                "feature_label": feature_info["feature_label"],
-                "description": feature_info["description"],
-                "shap_value": shap_value,
-                "absolute_shap_value": abs(shap_value),
-                "shap_direction": direction,
-                "patient_context": patient_info,
-            })
-
-        contributions.sort(
-            key=lambda item: item["absolute_shap_value"],
-            reverse=True,
+            prediction_result["prediction"],
         )
 
         return {
-            "prediction": int(prediction),
-            "model": "Gradient Boosting",
-            "explanation_method": "SHAP TreeExplainer",
-            "top_features": contributions[:10],
-            "all_features": contributions,
-            "note": (
-                "SHAP values describe contributions to the model "
-                "output being explained. Positive and negative values "
-                "indicate contribution direction, not necessarily higher "
-                "or lower clinical treatment-failure risk. The feature "
-                "descriptions summarize recorded data and do not establish "
-                "causation or independently confirm clinical failure."
+            **prediction_result,
+            "explanation_method": explanation["method"],
+            "top_features": explanation["top_features"],
+            "explanation": explanation,
+            "target_note": (
+                "This explanation describes model behavior for the project's "
+                "treatment-outcome proxy. It does not establish causation "
+                "or provide a clinical diagnosis."
             ),
         }
 
@@ -549,5 +504,5 @@ def explanation(request: PredictionRequest):
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Explanation generation failed: {exc}",
+            detail="Explanation failed due to an internal processing error.",
         ) from exc
