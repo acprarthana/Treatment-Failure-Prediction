@@ -8,11 +8,11 @@ Member 3 — Backend API Test Report
 `python -m pytest tests/test_api.py -v`
 
 **Test results:**
-- Total tests: 10
-- Passed: 10
+- Total tests: 11
+- Passed: 11
 - Failed: 0
 - Warnings: 7
-- Execution time: 26.98 seconds
+- Execution time: 21.98 seconds
 
 **Test coverage:**
 1. Health endpoint
@@ -25,6 +25,7 @@ Member 3 — Backend API Test Report
 8. SHAP reconstruction of model raw score
 9. CD4 change validation
 10. Viral-load change validation
+11. Direct saved-pipeline prediction and probability consistency with the API
 
 **Conclusion:**
 
