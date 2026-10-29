@@ -71,7 +71,19 @@ From the repository root, run:
 python -m pytest tests/test_api.py -v
 ```
 
-The API test suite contains five tests covering health, prediction, explanations, missing fields, and invalid numeric input.
+The API test suite contains 10 tests covering:
+- Health endpoint and model loading
+- Prediction and class probabilities
+- SHAP explanation responses
+- Missing required fields and invalid numeric inputs
+- Prediction consistency across requests
+- Agreement between prediction and explanation endpoints
+- SHAP values reconstructing the model's raw score
+- Validation of inconsistent CD4 and viral-load changes
+
+Latest recorded test result: **10 passed, 7 warnings**. The warnings are deprecation notices from dependencies and do not indicate test failures.
+
+Manual checks also confirmed that `/health` reported a healthy service with the model loaded, and that `/predict` and `/explanation` returned consistent predictions for the same test input.
 
 ## SHAP artifacts
 
