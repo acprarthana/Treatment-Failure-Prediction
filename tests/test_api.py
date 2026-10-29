@@ -78,3 +78,32 @@ def test_invalid_numeric_field():
 
     assert response.status_code == 422
 
+
+def test_prediction_is_consistent_across_requests():
+    first_response = client.post("/predict", json=VALID_INPUT)
+    second_response = client.post("/predict", json=VALID_INPUT)
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+
+    first = first_response.json()
+    second = second_response.json()
+
+    assert first["prediction"] == second["prediction"]
+    assert abs(first["probability"] - second["probability"]) < 1e-6
+    assert first["class_probabilities"] == second["class_probabilities"]
+
+
+def test_explanation_prediction_matches_prediction_endpoint():
+    prediction_response = client.post("/predict", json=VALID_INPUT)
+    explanation_response = client.post("/explanation", json=VALID_INPUT)
+
+    assert prediction_response.status_code == 200
+    assert explanation_response.status_code == 200
+
+    prediction = prediction_response.json()
+    explanation = explanation_response.json()
+
+    assert explanation["prediction"] == prediction["prediction"]
+
+
