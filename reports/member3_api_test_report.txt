@@ -12,7 +12,7 @@ Member 3 — Backend API Test Report
 - Passed: 10
 - Failed: 0
 - Warnings: 7
-- Execution time: 19.05 seconds
+- Execution time: 26.98 seconds
 
 **Test coverage:**
 1. Health endpoint
