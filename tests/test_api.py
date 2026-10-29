@@ -1,7 +1,13 @@
 
+import joblib
+import numpy as np
+import pandas as pd
+import shap
+
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
+
 
 client = TestClient(app)
 
@@ -15,7 +21,7 @@ VALID_INPUT = {
     "viral_load_change": 200,
     "years_since_previous_visit": 1,
     "sex": "Male",
-    "VISIT": 180
+    "VISIT": 180,
 }
 
 
@@ -107,3 +113,43 @@ def test_explanation_prediction_matches_prediction_endpoint():
     assert explanation["prediction"] == prediction["prediction"]
 
 
+def test_shap_values_reconstruct_model_raw_score():
+    artifact = joblib.load(
+        "models/gradient_boosting_treatment_proxy.joblib"
+    )
+    pipeline = (
+        artifact["pipeline"]
+        if isinstance(artifact, dict)
+        else artifact
+    )
+
+    input_df = pd.DataFrame([VALID_INPUT])
+
+    transformed = pipeline[:-1].transform(input_df)
+
+    if hasattr(transformed, "toarray"):
+        transformed = transformed.toarray()
+    else:
+        transformed = np.asarray(transformed)
+
+    classifier = pipeline.named_steps["model"]
+    explainer = shap.TreeExplainer(classifier)
+    shap_values = np.asarray(explainer.shap_values(transformed))
+
+    # Check the SHAP output dimensions for this binary model.
+    assert shap_values.ndim == 2
+    assert shap_values.shape[0] == 1
+    assert shap_values.shape[1] == transformed.shape[1]
+
+    expected_value = float(
+        np.asarray(explainer.expected_value).reshape(-1)[0]
+    )
+    shap_sum = float(shap_values[0].sum())
+
+    reconstructed_score = expected_value + shap_sum
+    actual_score = float(
+        classifier.decision_function(transformed)[0]
+    )
+
+    # SHAP values should reconstruct the model's raw decision score.
+    assert abs(reconstructed_score - actual_score) < 1e-5
