@@ -247,24 +247,31 @@ def describe_shap_feature(feature_name: str) -> dict:
 # Patient-specific explanations
 # --------------------------------------------------
 
+
 def explain_patient_feature(
     feature_name: str,
     input_df: pd.DataFrame,
 ) -> dict:
     """
-    Describe observed measurements and changes.
+    Describe recorded measurements and changes.
 
-    These descriptions explain the patient's recorded data.
-    SHAP values separately describe model contributions.
-    Neither establishes causation.
+    SHAP contributions explain model behavior, not causation
+    or independently confirmed clinical treatment failure.
     """
 
     row = input_df.iloc[0]
     feature = feature_name.split("__", 1)[-1]
 
-    if feature == "CD4":
-        current = float(row["CD4"])
-        previous = float(row["CD4_previous"])
+    if feature in ("CD4", "viral_load"):
+        if feature == "CD4":
+            current = float(row["CD4"])
+            previous = float(row["CD4_previous"])
+            label = "CD4 count"
+        else:
+            current = float(row["viral_load"])
+            previous = float(row["viral_load_previous"])
+            label = "viral load"
+
         change = current - previous
 
         if change > 0:
@@ -280,94 +287,80 @@ def explain_patient_feature(
             "observed_change": change_text,
             "change_value": change,
             "patient_explanation": (
-                f"The recorded CD4 count {change_text} between "
-                f"visits, from {previous:g} to {current:g}. "
-                "The SHAP value shows how the current CD4 feature "
-                "contributed to the model output being explained. "
-                "The decrease alone does not establish treatment failure."
+                f"The recorded {label} {change_text} between visits, "
+                f"from {previous:g} to {current:g}. The SHAP value "
+                f"describes how the current {label} feature contributed "
+                "to the model score. This observed change alone does "
+                "not establish or confirm clinical treatment failure."
             ),
         }
 
-    if feature == "viral_load":
-        current = float(row["viral_load"])
-        previous = float(row["viral_load_previous"])
-        change = current - previous
+    if feature in ("CD4_previous", "viral_load_previous"):
+        if feature == "CD4_previous":
+            value = float(row["CD4_previous"])
+            label = "previous CD4 count"
+        else:
+            value = float(row["viral_load_previous"])
+            label = "previous viral load"
 
-        if change > 0:
-            change_text = f"increased by {change:g}"
-        elif change < 0:
-            change_text = f"decreased by {abs(change):g}"
+        return {
+            "current_value": value,
+            "patient_explanation": (
+                f"The recorded {label} was {value:g}. Its SHAP value "
+                "describes this feature's contribution to the model "
+                "score, not a clinical cause or confirmed outcome."
+            ),
+        }
+
+    if feature in ("CD4_change", "viral_load_change"):
+        if feature == "CD4_change":
+            current = float(row["CD4"])
+            previous = float(row["CD4_previous"])
+            value = float(row["CD4_change"])
+            label = "CD4"
+            feature_label = "CD4-change"
+        else:
+            current = float(row["viral_load"])
+            previous = float(row["viral_load_previous"])
+            value = float(row["viral_load_change"])
+            label = "viral load"
+            feature_label = "viral-load-change"
+
+        observed_change = current - previous
+
+        if observed_change > 0:
+            change_text = f"increased by {observed_change:g}"
+        elif observed_change < 0:
+            change_text = f"decreased by {abs(observed_change):g}"
         else:
             change_text = "did not change"
 
         return {
-            "current_value": current,
+            "current_value": value,
             "previous_value": previous,
+            "measurement_value": current,
             "observed_change": change_text,
-            "change_value": change,
+            "change_value": observed_change,
             "patient_explanation": (
-                f"The recorded viral load {change_text} between "
-                f"visits, from {previous:g} to {current:g}. "
-                "The SHAP value shows how the current viral-load "
-                "feature contributed to the model output being explained. "
-                "This change alone does not confirm treatment failure."
-            ),
-        }
-
-    if feature == "CD4_previous":
-        value = float(row["CD4_previous"])
-
-        return {
-            "current_value": value,
-            "patient_explanation": (
-                f"The previous recorded CD4 count was {value:g}. "
-                "Its SHAP value indicates its contribution to the "
-                "model output being explained."
-            ),
-        }
-
-    if feature == "viral_load_previous":
-        value = float(row["viral_load_previous"])
-
-        return {
-            "current_value": value,
-            "patient_explanation": (
-                f"The previous recorded viral load was {value:g}. "
-                "Its SHAP value indicates its contribution to the "
-                "model output being explained."
-            ),
-        }
-
-    if feature == "CD4_change":
-        value = float(row["CD4_change"])
-
-        return {
-            "current_value": value,
-            "patient_explanation": (
-                f"The supplied CD4-change feature is {value:g}. "
-                "Its SHAP value indicates how this feature contributed "
-                "to the model output."
-            ),
-        }
-
-    if feature == "viral_load_change":
-        value = float(row["viral_load_change"])
-
-        return {
-            "current_value": value,
-            "patient_explanation": (
-                f"The supplied viral-load-change feature is {value:g}. "
-                "Its SHAP value indicates how this feature contributed "
-                "to the model output."
+                f"The supplied {feature_label} feature is {value:g}. "
+                f"The recorded {label} {change_text}, from "
+                f"{previous:g} to {current:g}. The SHAP value for "
+                f"the {feature_label} feature describes how this "
+                "change feature contributes to the model score. "
+                "It does not explain the medical cause of the change "
+                "or independently confirm treatment failure."
             ),
         }
 
     return {
         "patient_explanation": (
-            "This feature contributed to the model output as indicated "
-            "by its SHAP value. Its contribution is not proof of causation."
+            "The SHAP value describes how this feature contributed "
+            "to the model score. A feature contribution is not proof "
+            "of causation or independently confirmed clinical "
+            "treatment failure."
         ),
     }
+
 
 
 # --------------------------------------------------
