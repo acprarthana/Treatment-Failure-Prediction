@@ -3,16 +3,18 @@ platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\HP\AppDa
 cachedir: .pytest_cache
 rootdir: C:\Users\HP\HIV-Treatment-Failure-Prediction
 plugins: anyio-4.15.1
-collecting ... collected 8 items
+collecting ... collected 10 items
 
-tests/test_api.py::test_health_endpoint PASSED                           [ 12%]
-tests/test_api.py::test_prediction_endpoint PASSED                       [ 25%]
-tests/test_api.py::test_explanation_endpoint PASSED                      [ 37%]
-tests/test_api.py::test_missing_required_field PASSED                    [ 50%]
-tests/test_api.py::test_invalid_numeric_field PASSED                     [ 62%]
-tests/test_api.py::test_prediction_is_consistent_across_requests PASSED  [ 75%]
-tests/test_api.py::test_explanation_prediction_matches_prediction_endpoint PASSED [ 87%]
-tests/test_api.py::test_shap_values_reconstruct_model_raw_score PASSED   [100%]
+tests/test_api.py::test_health_endpoint PASSED                           [ 10%]
+tests/test_api.py::test_prediction_endpoint PASSED                       [ 20%]
+tests/test_api.py::test_explanation_endpoint PASSED                      [ 30%]
+tests/test_api.py::test_missing_required_field PASSED                    [ 40%]
+tests/test_api.py::test_invalid_numeric_field PASSED                     [ 50%]
+tests/test_api.py::test_prediction_is_consistent_across_requests PASSED  [ 60%]
+tests/test_api.py::test_explanation_prediction_matches_prediction_endpoint PASSED [ 70%]
+tests/test_api.py::test_shap_values_reconstruct_model_raw_score PASSED   [ 80%]
+tests/test_api.py::test_inconsistent_cd4_change_is_rejected PASSED       [ 90%]
+tests/test_api.py::test_inconsistent_viral_load_change_is_rejected PASSED [100%]
 
 ============================== warnings summary ===============================
 ..\AppData\Local\Programs\Python\Python311\Lib\site-packages\shap\plots\colors\_colors.py:47
@@ -35,5 +37,23 @@ tests/test_api.py::test_shap_values_reconstruct_model_raw_score PASSED   [100%]
   C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\site-packages\starlette\testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
     _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
 
+backend\app\main.py:187
+  C:\Users\HP\HIV-Treatment-Failure-Prediction\backend\app\main.py:187: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+..\AppData\Local\Programs\Python\Python311\Lib\site-packages\fastapi\applications.py:4681
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\site-packages\fastapi\applications.py:4681: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-======================= 8 passed, 5 warnings in 23.29s ========================
+======================= 10 passed, 7 warnings in 19.05s =======================
