@@ -22,3 +22,6 @@ Thumbs.db
 #personalfiles
 chatgpt_chat.txt
 remember_me.txt
+
+# Jupyter temporary checkpoint files
+.ipynb_checkpoints/

@@ -169,3 +169,30 @@ def test_inconsistent_viral_load_change_is_rejected():
     response = client.post("/predict", json=invalid_input)
 
     assert response.status_code == 422
+
+def test_api_matches_saved_pipeline_prediction():
+    artifact = joblib.load(
+        "models/gradient_boosting_treatment_proxy.joblib"
+    )
+    pipeline = (
+        artifact["pipeline"]
+        if isinstance(artifact, dict)
+        else artifact
+    )
+
+    input_df = pd.DataFrame([VALID_INPUT])
+    direct_prediction = int(pipeline.predict(input_df)[0])
+    direct_probabilities = pipeline.predict_proba(input_df)[0]
+
+    response = client.post("/predict", json=VALID_INPUT)
+
+    assert response.status_code == 200
+    result = response.json()
+
+    assert result["prediction"] == direct_prediction
+    assert abs(
+        result["class_probabilities"]["0"] - direct_probabilities[0]
+    ) < 1e-6
+    assert abs(
+        result["class_probabilities"]["1"] - direct_probabilities[1]
+    ) < 1e-6
