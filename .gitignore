@@ -25,3 +25,4 @@ remember_me.txt
 
 # Jupyter temporary checkpoint files
 .ipynb_checkpoints/
+database/hiv_prediction.db
